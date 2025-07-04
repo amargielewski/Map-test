@@ -1,13 +1,17 @@
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Layer } from 'deck.gl';
 import { createHighPerformanceDotsLayer } from '../components/layers/HighPerformanceDotsLayer';
+import { createHighPerformanceIconLayer } from '../components/layers/HighPerformanceIconLayer';
+import { createHighPerformanceTextLayer } from '../components/layers/HighPerformanceTextLayer';
 import { createTrailsLayer } from '../components/layers/TrailsLayer';
-import { createLegacyDotsLayer } from '../components/layers/LegacyDotsLayer';
+
+export type LayerType = 'dots' | 'icons' | 'text';
 
 interface PerformanceTestConfig {
     enableTrails: boolean;
     enableViewportCulling: boolean;
     updateInterval: number;
+    layerType: LayerType;
 }
 
 interface UsePerformanceTestLayersProps {
@@ -31,6 +35,41 @@ export function usePerformanceTestLayers({
     dots,
     getBinaryData,
 }: UsePerformanceTestLayersProps): Layer[] {
+    const [iconLayer, setIconLayer] = useState<Layer | null>(null);
+
+    // Handle async icon layer creation
+    useEffect(() => {
+        if (
+            config.layerType === 'icons' &&
+            isRunning &&
+            useHighPerformanceMode
+        ) {
+            const binaryData = getBinaryData();
+            if (binaryData.positions.length > 0) {
+                createHighPerformanceIconLayer({
+                    binaryData,
+                    isRunning,
+                    updateInterval: config.updateInterval,
+                })
+                    .then(layer => {
+                        setIconLayer(layer);
+                    })
+                    .catch(error => {
+                        console.warn('Failed to create icon layer:', error);
+                        setIconLayer(null);
+                    });
+            }
+        } else {
+            setIconLayer(null);
+        }
+    }, [
+        config.layerType,
+        isRunning,
+        useHighPerformanceMode,
+        config.updateInterval,
+        getBinaryData,
+    ]);
+
     return useMemo((): Layer[] => {
         if (!isRunning) return [];
 
@@ -42,44 +81,41 @@ export function usePerformanceTestLayers({
 
             if (binaryData.positions.length === 0) return [];
 
-            // Create high-performance dots layer
+            // Create high-performance layer based on selected type
             try {
-                const highPerfLayer = createHighPerformanceDotsLayer({
-                    binaryData,
-                    isRunning,
-                    updateInterval: config.updateInterval,
-                });
-                layers.push(highPerfLayer);
+                let highPerfLayer: Layer | null = null;
+
+                switch (config.layerType) {
+                    case 'icons':
+                        // Use the async-loaded icon layer
+                        if (iconLayer) {
+                            highPerfLayer = iconLayer;
+                        }
+                        break;
+                    case 'text':
+                        highPerfLayer = createHighPerformanceTextLayer({
+                            binaryData,
+                            isRunning,
+                            updateInterval: config.updateInterval,
+                        });
+                        break;
+                    case 'dots':
+                    default:
+                        highPerfLayer = createHighPerformanceDotsLayer({
+                            binaryData,
+                            isRunning,
+                            updateInterval: config.updateInterval,
+                        });
+                        break;
+                }
+
+                if (highPerfLayer) {
+                    layers.push(highPerfLayer);
+                }
             } catch (error) {
                 console.warn('Failed to create high-performance layer:', error);
                 return [];
             }
-        } else {
-            // Legacy mode for smaller datasets
-            const renderDots = config.enableViewportCulling
-                ? visibleDots
-                : dots;
-
-            if (renderDots.length === 0) return [];
-
-            // Trails layer (if enabled)
-            if (config.enableTrails) {
-                const trailsLayer = createTrailsLayer({
-                    renderDots,
-                    isRunning,
-                });
-
-                if (trailsLayer) {
-                    layers.push(trailsLayer);
-                }
-            }
-
-            // Legacy dots layer
-            const legacyLayer = createLegacyDotsLayer({
-                renderDots,
-                isRunning,
-            });
-            layers.push(legacyLayer);
         }
 
         return layers;
@@ -89,9 +125,11 @@ export function usePerformanceTestLayers({
         config.enableTrails,
         config.enableViewportCulling,
         config.updateInterval,
+        config.layerType, // Add layer type to dependencies
         visibleDots.length, // Use length instead of full array
         dots.length, // Use length instead of full array
         getBinaryData, // Include binary data function
+        iconLayer, // Include the async icon layer
         // Add a dependency that changes on animation frames when running
         isRunning ? Math.floor(Date.now() / (config.updateInterval * 5)) : 0, // Update every 5 frames
     ]);

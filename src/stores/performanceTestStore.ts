@@ -280,6 +280,9 @@ class DotDataBuffer {
     }
 }
 
+// Layer type options
+export type LayerType = 'dots' | 'icons' | 'text';
+
 // Test configuration
 interface TestConfig {
     dotCount: number;
@@ -293,6 +296,7 @@ interface TestConfig {
     cullingBuffer: number; // Extra margin for culling
     enableAdaptivePerformance: boolean; // Auto-disable features at high counts
     highPerformanceThreshold: number; // Dot count threshold for high perf mode
+    layerType: LayerType; // Type of layer to render
 }
 
 interface ViewportBounds {
@@ -355,6 +359,7 @@ const DEFAULT_CONFIG: TestConfig = {
     cullingBuffer: 0.01, // Extra margin for culling in degrees
     enableAdaptivePerformance: false, // Disabled since we always use high-performance mode
     highPerformanceThreshold: 0, // Always use high-performance mode regardless of dot count
+    layerType: 'dots', // Default layer type
 };
 
 // Global bounds for worldwide dot distribution

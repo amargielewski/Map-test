@@ -1,5 +1,8 @@
 import React from 'react';
-import { usePerformanceTestStore } from '../stores/performanceTestStore';
+import {
+    usePerformanceTestStore,
+    LayerType,
+} from '../stores/performanceTestStore';
 import { TEST_CONFIG } from '../constants/mapConstants';
 
 interface PerformanceTestControlsProps {
@@ -30,6 +33,11 @@ export function PerformanceTestControls({
 
     const handleCullingToggle = () => {
         updateConfig({ enableViewportCulling: !config.enableViewportCulling });
+    };
+
+    const handleLayerTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+        const layerType = e.target.value as LayerType;
+        updateConfig({ layerType });
     };
 
     return (
@@ -153,6 +161,30 @@ export function PerformanceTestControls({
                                     />
                                     Enable Viewport Culling
                                 </label>
+                            </div>
+
+                            <div>
+                                <label className="block text-yellow-400 mb-1">
+                                    Layer Type
+                                </label>
+                                <select
+                                    value={config.layerType}
+                                    onChange={handleLayerTypeChange}
+                                    disabled={isRunning}
+                                    className="w-full px-2 py-1 text-xs bg-gray-800 text-white rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+                                >
+                                    <option value="dots">Scatter Dots</option>
+                                    <option value="icons">Icons</option>
+                                    <option value="text">Text Labels</option>
+                                </select>
+                                <div className="text-xs text-gray-400 mt-1">
+                                    {config.layerType === 'dots' &&
+                                        'Fast circular dots'}
+                                    {config.layerType === 'icons' &&
+                                        'Icon markers (slower)'}
+                                    {config.layerType === 'text' &&
+                                        'Text labels (slowest)'}
+                                </div>
                             </div>
                         </div>
                     </div>
