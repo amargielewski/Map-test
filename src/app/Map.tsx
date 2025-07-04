@@ -1,5 +1,11 @@
 'use client';
-import React, { useState, useEffect, useRef } from 'react';
+import React, {
+    useState,
+    useEffect,
+    useRef,
+    useMemo,
+    useCallback,
+} from 'react';
 import { DeckGL } from '@deck.gl/react';
 import { ZoomWidget } from '@deck.gl/react';
 import { Map } from 'react-map-gl/mapbox';
@@ -8,12 +14,34 @@ import { ScatterplotLayer, PathLayer } from 'deck.gl';
 import { useBoolean } from '../hooks/useBoolean';
 import { usePerformanceTestStore } from '../stores/performanceTestStore';
 
+// Test configuration constants
+const TEST_CONFIG = {
+    DOT_COUNT: {
+        MIN: 100,
+        MAX: 50000,
+        STEP: 100,
+        DEFAULT: 1000,
+    },
+    SPEED: {
+        MIN: 0.00001,
+        MAX: 0.01,
+        STEP: 0.00001,
+        DEFAULT: 0.0001,
+    },
+    GLOBE_BOUNDS: {
+        MIN_LNG: -180,
+        MAX_LNG: 180,
+        MIN_LAT: -85, // Mercator projection limits
+        MAX_LAT: 85,
+    },
+} as const;
+
 const INITIAL_VIEW_STATE: MapViewState = {
-    longitude: -122.41669,
-    latitude: 37.7853,
-    zoom: 13,
+    longitude: 0, // Center on prime meridian
+    latitude: 20, // Slightly north to show more land
+    zoom: 2, // Global view
     maxZoom: 20,
-    minZoom: 2,
+    minZoom: 1,
 };
 
 // Map styles configuration
@@ -44,7 +72,9 @@ interface DebugToolbarProps {
     onToggle: () => void;
     fps: number;
     frameTime: number;
-    dotCount: number;
+    totalDots: number;
+    visibleDots: number;
+    cullingEnabled: boolean;
 }
 
 function DebugToolbar({
@@ -53,7 +83,9 @@ function DebugToolbar({
     onToggle,
     fps,
     frameTime,
-    dotCount,
+    totalDots,
+    visibleDots,
+    cullingEnabled,
 }: DebugToolbarProps) {
     const { longitude, latitude, zoom, bearing = 0, pitch = 0 } = viewState;
 
@@ -122,7 +154,25 @@ function DebugToolbar({
                             <div className="flex justify-between">
                                 <span>Active Dots:</span>
                                 <span className="text-cyan-400">
-                                    {dotCount.toLocaleString()}
+                                    {totalDots.toLocaleString()}
+                                </span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Visible Dots:</span>
+                                <span className="text-cyan-400">
+                                    {visibleDots.toLocaleString()}
+                                </span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Culling:</span>
+                                <span
+                                    className={
+                                        cullingEnabled
+                                            ? 'text-green-400'
+                                            : 'text-red-400'
+                                    }
+                                >
+                                    {cullingEnabled ? 'ON' : 'OFF'}
                                 </span>
                             </div>
                         </div>
@@ -215,7 +265,7 @@ function DebugToolbar({
                             <div className="flex justify-between">
                                 <span>Layers:</span>
                                 <span className="text-orange-400">
-                                    {dotCount > 0 ? 2 : 0}
+                                    {totalDots > 0 ? 2 : 0}
                                 </span>
                             </div>
                         </div>
@@ -251,6 +301,10 @@ function PerformanceTestControls({
 
     const handleTrailToggle = () => {
         updateConfig({ enableTrails: !config.enableTrails });
+    };
+
+    const handleCullingToggle = () => {
+        updateConfig({ enableViewportCulling: !config.enableViewportCulling });
     };
 
     return (
@@ -300,18 +354,27 @@ function PerformanceTestControls({
                         <div className="space-y-2 text-xs">
                             <div>
                                 <label className="block text-yellow-400 mb-1">
-                                    Dot Count: {config.dotCount}
+                                    Dot Count:{' '}
+                                    {config.dotCount.toLocaleString()}
                                 </label>
                                 <input
                                     type="range"
-                                    min="100"
-                                    max="5000"
-                                    step="100"
+                                    min={TEST_CONFIG.DOT_COUNT.MIN}
+                                    max={TEST_CONFIG.DOT_COUNT.MAX}
+                                    step={TEST_CONFIG.DOT_COUNT.STEP}
                                     value={config.dotCount}
                                     onChange={handleDotCountChange}
                                     disabled={isRunning}
                                     className="w-full"
                                 />
+                                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                                    <span>
+                                        {TEST_CONFIG.DOT_COUNT.MIN.toLocaleString()}
+                                    </span>
+                                    <span>
+                                        {TEST_CONFIG.DOT_COUNT.MAX.toLocaleString()}
+                                    </span>
+                                </div>
                             </div>
 
                             <div>
@@ -321,14 +384,26 @@ function PerformanceTestControls({
                                 </label>
                                 <input
                                     type="range"
-                                    min="0.00001"
-                                    max="0.001"
-                                    step="0.00001"
+                                    min={TEST_CONFIG.SPEED.MIN}
+                                    max={TEST_CONFIG.SPEED.MAX}
+                                    step={TEST_CONFIG.SPEED.STEP}
                                     value={config.maxSpeed}
                                     onChange={handleSpeedChange}
                                     disabled={isRunning}
                                     className="w-full"
                                 />
+                                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                                    <span>
+                                        {(
+                                            TEST_CONFIG.SPEED.MIN * 10000
+                                        ).toFixed(1)}
+                                    </span>
+                                    <span>
+                                        {(
+                                            TEST_CONFIG.SPEED.MAX * 10000
+                                        ).toFixed(1)}
+                                    </span>
+                                </div>
                             </div>
 
                             <div>
@@ -340,6 +415,18 @@ function PerformanceTestControls({
                                         disabled={isRunning}
                                     />
                                     Enable Trails
+                                </label>
+                            </div>
+
+                            <div>
+                                <label className="flex items-center gap-2 text-yellow-400">
+                                    <input
+                                        type="checkbox"
+                                        checked={config.enableViewportCulling}
+                                        onChange={handleCullingToggle}
+                                        disabled={isRunning}
+                                    />
+                                    Enable Viewport Culling
                                 </label>
                             </div>
                         </div>
@@ -382,11 +469,21 @@ export function MapComponent({}: MapComponentProps) {
     const { value: showFlights, toggle: toggleShowFlights } = useBoolean(true);
     const { value: showDebug, toggle: toggleDebug } = useBoolean(true);
     const { value: showTestControls, toggle: toggleTestControls } =
-        useBoolean(false);
+        useBoolean(true);
 
     // Performance test store
-    const { dots, isRunning, config, updateDots, setBounds } =
-        usePerformanceTestStore();
+    const {
+        dots,
+        visibleDots,
+        isRunning,
+        config,
+        totalDots,
+        visibleDotsCount,
+        cullingEnabled,
+        updateDots,
+        setBounds,
+        updateViewportCulling,
+    } = usePerformanceTestStore();
 
     // Performance monitoring
     const frameRef = useRef<number>(0);
@@ -395,18 +492,74 @@ export function MapComponent({}: MapComponentProps) {
     const [fps, setFps] = useState<number>(0);
     const [frameTime, setFrameTime] = useState<number>(0);
 
-    // Update test bounds when view changes
+    // Update viewport culling when view changes
     useEffect(() => {
-        const latRange = 0.1; // degrees
-        const lngRange = 0.1; // degrees
+        if (isRunning && config.enableViewportCulling) {
+            // Calculate proper viewport bounds using Web Mercator projection
+            // This accounts for the actual screen dimensions and aspect ratio
 
+            // Get the container element to calculate screen dimensions
+            const mapContainer = document.querySelector(
+                '.w-full.h-full.relative',
+            );
+            const containerWidth =
+                mapContainer?.clientWidth || window.innerWidth;
+            const containerHeight =
+                mapContainer?.clientHeight || window.innerHeight;
+
+            // Calculate the map extent in degrees at the current zoom level
+            // Web Mercator: 360 degrees spans the entire world at zoom 0
+            const scale = Math.pow(2, viewState.zoom);
+            const worldWidth = 360; // degrees longitude
+            const worldHeight = 180; // degrees latitude (but adjusted for Mercator)
+
+            // Calculate viewport size in degrees
+            const degreesPerPixelX = worldWidth / (256 * scale);
+            const degreesPerPixelY = worldHeight / (256 * scale);
+
+            // Calculate the actual viewport bounds based on screen size
+            const halfScreenWidth = (containerWidth / 2) * degreesPerPixelX;
+            const halfScreenHeight = (containerHeight / 2) * degreesPerPixelY;
+
+            // Apply Mercator projection correction for latitude
+            const centerLatRad = (viewState.latitude * Math.PI) / 180;
+            const latitudeCorrection = Math.cos(centerLatRad);
+            const adjustedHalfScreenHeight =
+                halfScreenHeight / latitudeCorrection;
+
+            const viewportBounds = {
+                minLng: viewState.longitude - halfScreenWidth,
+                maxLng: viewState.longitude + halfScreenWidth,
+                minLat: Math.max(
+                    -85,
+                    viewState.latitude - adjustedHalfScreenHeight,
+                ),
+                maxLat: Math.min(
+                    85,
+                    viewState.latitude + adjustedHalfScreenHeight,
+                ),
+            };
+
+            updateViewportCulling(viewportBounds);
+        }
+    }, [
+        viewState.longitude,
+        viewState.latitude,
+        viewState.zoom,
+        isRunning,
+        config.enableViewportCulling,
+        updateViewportCulling,
+    ]);
+
+    // Set global bounds for dot generation (once on mount)
+    useEffect(() => {
         setBounds({
-            minLng: viewState.longitude - lngRange,
-            maxLng: viewState.longitude + lngRange,
-            minLat: viewState.latitude - latRange,
-            maxLat: viewState.latitude + latRange,
+            minLng: TEST_CONFIG.GLOBE_BOUNDS.MIN_LNG,
+            maxLng: TEST_CONFIG.GLOBE_BOUNDS.MAX_LNG,
+            minLat: TEST_CONFIG.GLOBE_BOUNDS.MIN_LAT,
+            maxLat: TEST_CONFIG.GLOBE_BOUNDS.MAX_LAT,
         });
-    }, [viewState.longitude, viewState.latitude, setBounds]);
+    }, [setBounds]);
 
     // Performance test animation loop
     useEffect(() => {
@@ -460,21 +613,25 @@ export function MapComponent({}: MapComponentProps) {
         setViewState(e.viewState as MapViewState);
     };
 
-    // Create performance test layers
-    const createPerformanceTestLayers = (): Layer[] => {
-        if (!isRunning || dots.length === 0) return [];
+    // Create performance test layers with optimization and memoization
+    const performanceTestLayers = useMemo((): Layer[] => {
+        if (!isRunning) return [];
 
         const layers: Layer[] = [];
 
-        // Trails layer (if enabled)
+        // Use visibleDots for culling, fall back to all dots if culling is disabled
+        const renderDots = config.enableViewportCulling ? visibleDots : dots;
+
+        if (renderDots.length === 0) return [];
+
+        // Trails layer (if enabled) - optimized with constant values where possible
         if (config.enableTrails) {
-            const trailData = dots.flatMap(dot =>
+            const trailData = renderDots.flatMap(dot =>
                 dot.trail.length > 1
                     ? [
                           {
                               path: dot.trail,
                               color: [...dot.color, 100], // Semi-transparent
-                              width: 1,
                           },
                       ]
                     : [],
@@ -485,46 +642,64 @@ export function MapComponent({}: MapComponentProps) {
                     new PathLayer({
                         id: 'performance-test-trails',
                         data: trailData,
-                        pickable: false,
+                        pickable: false, // Disable picking for better performance
                         getPath: (d: any) => d.path,
                         getColor: (d: any) => d.color,
-                        getWidth: (d: any) => d.width,
+                        getWidth: 1, // Use constant instead of accessor
                         widthMinPixels: 1,
                         widthMaxPixels: 2,
+                        // Use simplified updateTriggers for optimal performance
+                        updateTriggers: {
+                            getPath: renderDots.length, // Simple trigger based on count
+                            getColor: renderDots.length,
+                        },
                     }),
                 );
             }
         }
 
-        // Dots layer
+        // Dots layer - heavily optimized following deck.gl best practices
         layers.push(
             new ScatterplotLayer({
                 id: 'performance-test-dots',
-                data: dots,
-                pickable: false,
+                data: renderDots,
+                pickable: false, // Disable picking for better performance
                 opacity: 0.8,
-                stroked: true,
+                stroked: false, // Disable stroke for better performance
                 filled: true,
                 radiusScale: 1,
                 radiusMinPixels: 1,
                 radiusMaxPixels: 10,
-                lineWidthMinPixels: 1,
                 getPosition: (d: any) => d.position,
                 getRadius: (d: any) => d.size,
                 getFillColor: (d: any) => d.color,
-                getLineColor: (d: any) => [255, 255, 255, 100],
+                // Optimized updateTriggers - use simplified triggers
                 updateTriggers: {
-                    getPosition: dots.map(d => d.position).flat(),
-                    getRadius: dots.map(d => d.size),
-                    getFillColor: dots.map(d => d.color).flat(),
+                    getPosition: isRunning ? performance.now() : 0, // Use timestamp for animation
+                    getRadius: renderDots.length, // Only update when data size changes
+                    getFillColor: renderDots.length, // Only update when data size changes
                 },
+                // Performance optimizations
+                extensions: [],
             }),
         );
 
         return layers;
-    };
+    }, [
+        isRunning,
+        config.enableTrails,
+        config.enableViewportCulling,
+        visibleDots.length, // Use length instead of full array
+        dots.length, // Use length instead of full array
+        // Add a dependency that changes on animation frames when running
+        isRunning ? Math.floor(Date.now() / (config.updateInterval * 5)) : 0, // Update every 5 frames
+    ]);
 
-    const layers: Layer[] = [...createPerformanceTestLayers()];
+    // Memoize the layers array to prevent unnecessary re-renders
+    const layers: Layer[] = useMemo(
+        () => performanceTestLayers,
+        [performanceTestLayers],
+    );
 
     return (
         <div className="w-full h-full relative">
@@ -547,7 +722,9 @@ export function MapComponent({}: MapComponentProps) {
                 onToggle={toggleDebug}
                 fps={fps}
                 frameTime={frameTime}
-                dotCount={dots.length}
+                totalDots={totalDots}
+                visibleDots={visibleDotsCount}
+                cullingEnabled={cullingEnabled}
             />
 
             <PerformanceTestControls

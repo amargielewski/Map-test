@@ -19,18 +19,29 @@ interface TestConfig {
     trailLength: number;
     dotSizeMin: number;
     dotSizeMax: number;
+    enableViewportCulling: boolean;
+    cullingBuffer: number; // Extra margin for culling
+}
+
+interface ViewportBounds {
+    minLng: number;
+    maxLng: number;
+    minLat: number;
+    maxLat: number;
 }
 
 interface PerformanceTestState {
     dots: MovingDot[];
+    visibleDots: MovingDot[]; // Cached viewport-culled dots
     isRunning: boolean;
     config: TestConfig;
-    bounds: {
-        minLng: number;
-        maxLng: number;
-        minLat: number;
-        maxLat: number;
-    };
+    bounds: ViewportBounds;
+    lastViewportBounds: ViewportBounds | null;
+
+    // Performance metrics
+    totalDots: number;
+    visibleDotsCount: number;
+    cullingEnabled: boolean;
 
     // Actions
     startTest: () => void;
@@ -38,12 +49,8 @@ interface PerformanceTestState {
     updateDots: () => void;
     generateDots: (count: number) => void;
     updateConfig: (config: Partial<TestConfig>) => void;
-    setBounds: (bounds: {
-        minLng: number;
-        maxLng: number;
-        minLat: number;
-        maxLat: number;
-    }) => void;
+    setBounds: (bounds: ViewportBounds) => void;
+    updateViewportCulling: (viewportBounds: ViewportBounds) => void;
 }
 
 // Default configuration
@@ -55,14 +62,16 @@ const DEFAULT_CONFIG: TestConfig = {
     trailLength: 20,
     dotSizeMin: 2,
     dotSizeMax: 8,
+    enableViewportCulling: true,
+    cullingBuffer: 0.01, // Extra margin for culling in degrees
 };
 
-// Default bounds (San Francisco area)
+// Global bounds for worldwide dot distribution
 const DEFAULT_BOUNDS = {
-    minLng: -122.5,
-    maxLng: -122.3,
-    minLat: 37.7,
-    maxLat: 37.85,
+    minLng: -180,
+    maxLng: 180,
+    minLat: -85, // Mercator projection limits
+    maxLat: 85,
 };
 
 // Utility functions
@@ -140,12 +149,82 @@ const updateDotPosition = (
     };
 };
 
+// Viewport culling utility
+const isPointInViewport = (
+    point: [number, number],
+    viewport: ViewportBounds,
+    buffer: number = 0,
+): boolean => {
+    const [lng, lat] = point;
+    return (
+        lng >= viewport.minLng - buffer &&
+        lng <= viewport.maxLng + buffer &&
+        lat >= viewport.minLat - buffer &&
+        lat <= viewport.maxLat + buffer
+    );
+};
+
+// Efficient viewport culling that only recalculates when needed
+const updateViewportCulling = (
+    dots: MovingDot[],
+    viewportBounds: ViewportBounds,
+    lastViewportBounds: ViewportBounds | null,
+    config: TestConfig,
+    forceUpdate: boolean = false,
+): { visibleDots: MovingDot[]; shouldUpdate: boolean } => {
+    if (!config.enableViewportCulling) {
+        return { visibleDots: dots, shouldUpdate: false };
+    }
+
+    // Check if viewport bounds changed significantly
+    const boundsChanged =
+        forceUpdate ||
+        !lastViewportBounds ||
+        Math.abs(viewportBounds.minLng - lastViewportBounds.minLng) > 0.001 ||
+        Math.abs(viewportBounds.maxLng - lastViewportBounds.maxLng) > 0.001 ||
+        Math.abs(viewportBounds.minLat - lastViewportBounds.minLat) > 0.001 ||
+        Math.abs(viewportBounds.maxLat - lastViewportBounds.maxLat) > 0.001;
+
+    if (!boundsChanged) {
+        return { visibleDots: [], shouldUpdate: false };
+    }
+
+    // Only cull if we have more than 500 dots (avoid overhead for small datasets)
+    if (dots.length < 500) {
+        return { visibleDots: dots, shouldUpdate: true };
+    }
+
+    // Use a more efficient filtering approach
+    const visibleDots: MovingDot[] = [];
+    const buffer = config.cullingBuffer;
+    const minLng = viewportBounds.minLng - buffer;
+    const maxLng = viewportBounds.maxLng + buffer;
+    const minLat = viewportBounds.minLat - buffer;
+    const maxLat = viewportBounds.maxLat + buffer;
+
+    for (let i = 0; i < dots.length; i++) {
+        const dot = dots[i];
+        const [lng, lat] = dot.position;
+
+        if (lng >= minLng && lng <= maxLng && lat >= minLat && lat <= maxLat) {
+            visibleDots.push(dot);
+        }
+    }
+
+    return { visibleDots, shouldUpdate: true };
+};
+
 export const usePerformanceTestStore = create<PerformanceTestState>(
     (set, get) => ({
         dots: [],
+        visibleDots: [],
         isRunning: false,
         config: DEFAULT_CONFIG,
         bounds: DEFAULT_BOUNDS,
+        lastViewportBounds: null,
+        totalDots: 0,
+        visibleDotsCount: 0,
+        cullingEnabled: true,
 
         startTest: () => {
             const { config, generateDots } = get();
@@ -154,15 +233,44 @@ export const usePerformanceTestStore = create<PerformanceTestState>(
         },
 
         stopTest: () => {
-            set({ isRunning: false, dots: [] });
+            set({
+                isRunning: false,
+                dots: [],
+                visibleDots: [],
+                totalDots: 0,
+                visibleDotsCount: 0,
+                lastViewportBounds: null,
+            });
         },
 
         updateDots: () => {
-            const { dots, bounds, config } = get();
+            const { dots, bounds, config, lastViewportBounds } = get();
             const updatedDots = dots.map(dot =>
                 updateDotPosition(dot, bounds, config),
             );
-            set({ dots: updatedDots });
+
+            // If culling is enabled and we have viewport bounds, update visible dots
+            let newVisibleDots = updatedDots;
+            let newVisibleDotsCount = updatedDots.length;
+
+            if (config.enableViewportCulling && lastViewportBounds) {
+                const { visibleDots } = updateViewportCulling(
+                    updatedDots,
+                    lastViewportBounds,
+                    lastViewportBounds,
+                    config,
+                    true, // Force update since dots have moved
+                );
+                newVisibleDots = visibleDots;
+                newVisibleDotsCount = visibleDots.length;
+            }
+
+            set({
+                dots: updatedDots,
+                totalDots: updatedDots.length,
+                visibleDots: newVisibleDots,
+                visibleDotsCount: newVisibleDotsCount,
+            });
         },
 
         generateDots: (count: number) => {
@@ -170,7 +278,12 @@ export const usePerformanceTestStore = create<PerformanceTestState>(
             const newDots = Array.from({ length: count }, () =>
                 generateRandomDot(bounds, config),
             );
-            set({ dots: newDots });
+            set({
+                dots: newDots,
+                totalDots: newDots.length,
+                visibleDots: newDots,
+                visibleDotsCount: newDots.length,
+            });
         },
 
         updateConfig: (newConfig: Partial<TestConfig>) => {
@@ -179,8 +292,28 @@ export const usePerformanceTestStore = create<PerformanceTestState>(
             set({ config: updatedConfig });
         },
 
-        setBounds: newBounds => {
+        setBounds: (newBounds: ViewportBounds) => {
             set({ bounds: newBounds });
+        },
+
+        updateViewportCulling: (viewportBounds: ViewportBounds) => {
+            const { dots, lastViewportBounds, config } = get();
+
+            const { visibleDots, shouldUpdate } = updateViewportCulling(
+                dots,
+                viewportBounds,
+                lastViewportBounds,
+                config,
+                false, // Don't force update for viewport changes
+            );
+
+            if (shouldUpdate) {
+                set({
+                    visibleDots,
+                    visibleDotsCount: visibleDots.length,
+                    lastViewportBounds: viewportBounds,
+                });
+            }
         },
     }),
 );
