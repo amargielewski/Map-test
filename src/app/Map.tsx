@@ -75,6 +75,8 @@ interface DebugToolbarProps {
     totalDots: number;
     visibleDots: number;
     cullingEnabled: boolean;
+    useHighPerformanceMode: boolean;
+    updateTime: number;
 }
 
 function DebugToolbar({
@@ -86,6 +88,8 @@ function DebugToolbar({
     totalDots,
     visibleDots,
     cullingEnabled,
+    useHighPerformanceMode,
+    updateTime,
 }: DebugToolbarProps) {
     const { longitude, latitude, zoom, bearing = 0, pitch = 0 } = viewState;
 
@@ -173,6 +177,34 @@ function DebugToolbar({
                                     }
                                 >
                                     {cullingEnabled ? 'ON' : 'OFF'}
+                                </span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Mode:</span>
+                                <span
+                                    className={
+                                        useHighPerformanceMode
+                                            ? 'text-green-400'
+                                            : 'text-blue-400'
+                                    }
+                                >
+                                    {useHighPerformanceMode
+                                        ? 'HIGH-PERF'
+                                        : 'LEGACY'}
+                                </span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Update Time:</span>
+                                <span
+                                    className={
+                                        updateTime > 16
+                                            ? 'text-red-400'
+                                            : updateTime > 8
+                                            ? 'text-yellow-400'
+                                            : 'text-green-400'
+                                    }
+                                >
+                                    {updateTime.toFixed(2)}ms
                                 </span>
                             </div>
                         </div>
@@ -459,11 +491,7 @@ function PerformanceTestControls({
     );
 }
 
-interface MapComponentProps {
-    // Remove car-related props - now only flight data
-}
-
-export function MapComponent({}: MapComponentProps) {
+export function MapComponent() {
     const [viewState, setViewState] =
         useState<MapViewState>(INITIAL_VIEW_STATE);
     const { value: showFlights, toggle: toggleShowFlights } = useBoolean(true);
@@ -480,9 +508,12 @@ export function MapComponent({}: MapComponentProps) {
         totalDots,
         visibleDotsCount,
         cullingEnabled,
+        useHighPerformanceMode,
+        updateTime,
         updateDots,
         setBounds,
         updateViewportCulling,
+        getBinaryData,
     } = usePerformanceTestStore();
 
     // Performance monitoring
@@ -619,78 +650,139 @@ export function MapComponent({}: MapComponentProps) {
 
         const layers: Layer[] = [];
 
-        // Use visibleDots for culling, fall back to all dots if culling is disabled
-        const renderDots = config.enableViewportCulling ? visibleDots : dots;
+        if (useHighPerformanceMode) {
+            // High-performance mode using binary data
+            const binaryData = getBinaryData();
 
-        if (renderDots.length === 0) return [];
+            if (binaryData.positions.length === 0) return [];
 
-        // Trails layer (if enabled) - optimized with constant values where possible
-        if (config.enableTrails) {
-            const trailData = renderDots.flatMap(dot =>
-                dot.trail.length > 1
-                    ? [
-                          {
-                              path: dot.trail,
-                              color: [...dot.color, 100], // Semi-transparent
-                          },
-                      ]
-                    : [],
-            );
+            // Convert binary data to format expected by ScatterplotLayer
+            const numPoints = binaryData.positions.length / 3;
+            const data = new Array(numPoints);
 
-            if (trailData.length > 0) {
-                layers.push(
-                    new PathLayer({
-                        id: 'performance-test-trails',
-                        data: trailData,
-                        pickable: false, // Disable picking for better performance
-                        getPath: (d: any) => d.path,
-                        getColor: (d: any) => d.color,
-                        getWidth: 1, // Use constant instead of accessor
-                        widthMinPixels: 1,
-                        widthMaxPixels: 2,
-                        // Use simplified updateTriggers for optimal performance
-                        updateTriggers: {
-                            getPath: renderDots.length, // Simple trigger based on count
-                            getColor: renderDots.length,
-                        },
-                    }),
-                );
+            for (let i = 0; i < numPoints; i++) {
+                data[i] = {
+                    position: [
+                        binaryData.positions[i * 3],
+                        binaryData.positions[i * 3 + 1],
+                        binaryData.positions[i * 3 + 2],
+                    ],
+                    color: [
+                        binaryData.colors[i * 4],
+                        binaryData.colors[i * 4 + 1],
+                        binaryData.colors[i * 4 + 2],
+                        binaryData.colors[i * 4 + 3],
+                    ],
+                    size: binaryData.sizes[i],
+                };
             }
-        }
 
-        // Dots layer - heavily optimized following deck.gl best practices
-        layers.push(
-            new ScatterplotLayer({
-                id: 'performance-test-dots',
-                data: renderDots,
-                pickable: false, // Disable picking for better performance
-                opacity: 0.8,
-                stroked: false, // Disable stroke for better performance
-                filled: true,
-                radiusScale: 1,
-                radiusMinPixels: 1,
-                radiusMaxPixels: 10,
-                getPosition: (d: any) => d.position,
-                getRadius: (d: any) => d.size,
-                getFillColor: (d: any) => d.color,
-                // Optimized updateTriggers - use simplified triggers
-                updateTriggers: {
-                    getPosition: isRunning ? performance.now() : 0, // Use timestamp for animation
-                    getRadius: renderDots.length, // Only update when data size changes
-                    getFillColor: renderDots.length, // Only update when data size changes
-                },
-                // Performance optimizations
-                extensions: [],
-            }),
-        );
+            // High-performance dots layer - optimized for large datasets
+            layers.push(
+                new ScatterplotLayer({
+                    id: 'performance-test-dots-binary',
+                    data: data,
+                    pickable: false, // Disable picking for better performance
+                    opacity: 0.8,
+                    stroked: false, // Disable stroke for better performance
+                    filled: true,
+                    radiusScale: 1,
+                    radiusMinPixels: 1,
+                    radiusMaxPixels: 10,
+                    getPosition: (d: any) => d.position,
+                    getRadius: (d: any) => d.size,
+                    getFillColor: (d: any) => d.color,
+                    // Minimal updateTriggers for high performance
+                    updateTriggers: {
+                        getPosition: isRunning
+                            ? Math.floor(
+                                  Date.now() / (config.updateInterval * 2),
+                              )
+                            : 0,
+                    },
+                    // Performance optimizations
+                    extensions: [],
+                }),
+            );
+        } else {
+            // Legacy mode for smaller datasets
+            const renderDots = config.enableViewportCulling
+                ? visibleDots
+                : dots;
+
+            if (renderDots.length === 0) return [];
+
+            // Trails layer (if enabled) - optimized with constant values where possible
+            if (config.enableTrails) {
+                const trailData = renderDots.flatMap(dot =>
+                    dot.trail.length > 1
+                        ? [
+                              {
+                                  path: dot.trail,
+                                  color: [...dot.color, 100], // Semi-transparent
+                              },
+                          ]
+                        : [],
+                );
+
+                if (trailData.length > 0) {
+                    layers.push(
+                        new PathLayer({
+                            id: 'performance-test-trails',
+                            data: trailData,
+                            pickable: false, // Disable picking for better performance
+                            getPath: (d: any) => d.path,
+                            getColor: (d: any) => d.color,
+                            getWidth: 1, // Use constant instead of accessor
+                            widthMinPixels: 1,
+                            widthMaxPixels: 2,
+                            // Use simplified updateTriggers for optimal performance
+                            updateTriggers: {
+                                getPath: renderDots.length, // Simple trigger based on count
+                                getColor: renderDots.length,
+                            },
+                        }),
+                    );
+                }
+            }
+
+            // Dots layer - heavily optimized following deck.gl best practices
+            layers.push(
+                new ScatterplotLayer({
+                    id: 'performance-test-dots',
+                    data: renderDots,
+                    pickable: false, // Disable picking for better performance
+                    opacity: 0.8,
+                    stroked: false, // Disable stroke for better performance
+                    filled: true,
+                    radiusScale: 1,
+                    radiusMinPixels: 1,
+                    radiusMaxPixels: 10,
+                    getPosition: (d: any) => d.position,
+                    getRadius: (d: any) => d.size,
+                    getFillColor: (d: any) => d.color,
+                    // Optimized updateTriggers - use simplified triggers
+                    updateTriggers: {
+                        getPosition: isRunning ? performance.now() : 0, // Use timestamp for animation
+                        getRadius: renderDots.length, // Only update when data size changes
+                        getFillColor: renderDots.length, // Only update when data size changes
+                    },
+                    // Performance optimizations
+                    extensions: [],
+                }),
+            );
+        }
 
         return layers;
     }, [
         isRunning,
+        useHighPerformanceMode,
         config.enableTrails,
         config.enableViewportCulling,
+        config.updateInterval,
         visibleDots.length, // Use length instead of full array
         dots.length, // Use length instead of full array
+        getBinaryData, // Include binary data function
         // Add a dependency that changes on animation frames when running
         isRunning ? Math.floor(Date.now() / (config.updateInterval * 5)) : 0, // Update every 5 frames
     ]);
@@ -725,6 +817,8 @@ export function MapComponent({}: MapComponentProps) {
                 totalDots={totalDots}
                 visibleDots={visibleDotsCount}
                 cullingEnabled={cullingEnabled}
+                useHighPerformanceMode={useHighPerformanceMode}
+                updateTime={updateTime}
             />
 
             <PerformanceTestControls
