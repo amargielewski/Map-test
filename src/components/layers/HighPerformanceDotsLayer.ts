@@ -28,12 +28,14 @@ export function createHighPerformanceDotsLayer({
     const data = new Array(numPoints);
 
     for (let i = 0; i < numPoints; i++) {
+        const position = [
+            binaryData.positions[i * 3],
+            binaryData.positions[i * 3 + 1],
+            binaryData.positions[i * 3 + 2],
+        ];
+
         data[i] = {
-            position: [
-                binaryData.positions[i * 3],
-                binaryData.positions[i * 3 + 1],
-                binaryData.positions[i * 3 + 2],
-            ],
+            position: position,
             color: [
                 binaryData.colors[i * 4],
                 binaryData.colors[i * 4 + 1],
@@ -41,13 +43,16 @@ export function createHighPerformanceDotsLayer({
                 binaryData.colors[i * 4 + 3],
             ],
             size: binaryData.sizes[i],
+            // Add formatted position for tooltip
+            lng: position[0],
+            lat: position[1],
         };
     }
 
     return new ScatterplotLayer({
         id: 'performance-test-dots-binary',
         data: data,
-        pickable: false, // Disable picking for better performance
+        pickable: true, // Enable picking for tooltips
         opacity: 0.8,
         stroked: false, // Disable stroke for better performance
         filled: true,

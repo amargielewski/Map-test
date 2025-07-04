@@ -78,6 +78,63 @@ export function MapComponent() {
         setViewState(e.viewState as MapViewState);
     };
 
+    // Tooltip handler for hovering over elements
+    const getTooltip = (info: any) => {
+        if (!info || !info.object) return null;
+
+        const { object, coordinate } = info;
+        // Use object's position if available, otherwise fall back to coordinate
+        const [lng, lat] = object.position || coordinate || [0, 0];
+
+        // Format position with appropriate precision
+        const formattedLng = lng.toFixed(6);
+        const formattedLat = lat.toFixed(6);
+
+        // Build tooltip content based on layer type
+        let content = `
+            <div><strong>Position:</strong></div>
+            <div>Lng: ${formattedLng}</div>
+            <div>Lat: ${formattedLat}</div>
+        `;
+
+        if (object.size) {
+            content += `<div>Size: ${object.size.toFixed(2)}</div>`;
+        }
+
+        if (object.text) {
+            content += `<div>Text: ${object.text}</div>`;
+        }
+
+        if (object.icon) {
+            content += `<div>Icon: ${object.icon}</div>`;
+        }
+
+        // Add color information
+        if (object.color && Array.isArray(object.color)) {
+            const [r, g, b, a] = object.color;
+            content += `<div>Color: rgba(${r}, ${g}, ${b}, ${a || 255})</div>`;
+        }
+
+        return {
+            html: `
+                <div style="background: rgba(0, 0, 0, 0.8); color: white; padding: 8px; border-radius: 4px; font-size: 12px; font-family: monospace; max-width: 200px;">
+                    ${content}
+                </div>
+            `,
+            style: {
+                backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                color: 'white',
+                padding: '8px',
+                borderRadius: '4px',
+                fontSize: '12px',
+                fontFamily: 'monospace',
+                pointerEvents: 'none',
+                zIndex: '1000',
+                maxWidth: '200px',
+            },
+        };
+    };
+
     // Create performance test layers using the custom hook
     const layers = usePerformanceTestLayers({
         isRunning,
@@ -95,6 +152,7 @@ export function MapComponent() {
                 viewState={viewState}
                 onViewStateChange={handleViewStateChange}
                 controller
+                getTooltip={getTooltip}
             >
                 <Map
                     mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_API_TOKEN}

@@ -29,7 +29,7 @@ export function createTrailsLayer({
     return new PathLayer({
         id: 'performance-test-trails',
         data: trailData,
-        pickable: false, // Disable picking for better performance
+        pickable: true, // Enable picking for tooltips
         getPath: (d: any) => d.path,
         getColor: (d: any) => d.color,
         getWidth: 1, // Use constant instead of accessor

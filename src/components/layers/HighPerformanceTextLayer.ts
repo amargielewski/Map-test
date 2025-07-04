@@ -30,12 +30,14 @@ export function createHighPerformanceTextLayer({
     const data = new Array(numPoints);
 
     for (let i = 0; i < numPoints; i++) {
+        const position = [
+            binaryData.positions[i * 3],
+            binaryData.positions[i * 3 + 1],
+            binaryData.positions[i * 3 + 2],
+        ];
+
         data[i] = {
-            position: [
-                binaryData.positions[i * 3],
-                binaryData.positions[i * 3 + 1],
-                binaryData.positions[i * 3 + 2],
-            ],
+            position: position,
             color: [
                 binaryData.colors[i * 4],
                 binaryData.colors[i * 4 + 1],
@@ -44,13 +46,16 @@ export function createHighPerformanceTextLayer({
             ],
             size: binaryData.sizes[i],
             text: (i + 1).toString(), // Simple text content
+            // Add formatted position for tooltip
+            lng: position[0],
+            lat: position[1],
         };
     }
 
     return new TextLayer({
         id: 'performance-test-text-binary',
         data: data,
-        pickable: false, // Disable picking for better performance
+        pickable: true, // Enable picking for tooltips
         opacity: 0.8,
         getText: (d: any) => d.text,
         getPosition: (d: any) => d.position,

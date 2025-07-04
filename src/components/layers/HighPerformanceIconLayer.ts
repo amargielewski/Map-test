@@ -34,12 +34,14 @@ export async function createHighPerformanceIconLayer({
     const data = new Array(numPoints);
 
     for (let i = 0; i < numPoints; i++) {
+        const position = [
+            binaryData.positions[i * 3],
+            binaryData.positions[i * 3 + 1],
+            binaryData.positions[i * 3 + 2],
+        ];
+
         data[i] = {
-            position: [
-                binaryData.positions[i * 3],
-                binaryData.positions[i * 3 + 1],
-                binaryData.positions[i * 3 + 2],
-            ],
+            position: position,
             color: [
                 binaryData.colors[i * 4],
                 binaryData.colors[i * 4 + 1],
@@ -48,13 +50,16 @@ export async function createHighPerformanceIconLayer({
             ],
             size: binaryData.sizes[i],
             icon: 'test-icon', // Use your custom icon
+            // Add formatted position for tooltip
+            lng: position[0],
+            lat: position[1],
         };
     }
 
     return new IconLayer({
         id: 'performance-test-icons-binary',
         data: data,
-        pickable: false, // Disable picking for better performance
+        pickable: true, // Enable picking for tooltips
         opacity: 0.8,
         // Use your custom icon atlas
         iconAtlas: iconAtlas,
