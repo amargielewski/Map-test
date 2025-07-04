@@ -353,8 +353,8 @@ const DEFAULT_CONFIG: TestConfig = {
     dotSizeMax: 8,
     enableViewportCulling: true,
     cullingBuffer: 0.01, // Extra margin for culling in degrees
-    enableAdaptivePerformance: true,
-    highPerformanceThreshold: 10000, // Switch to high perf mode above 10k dots
+    enableAdaptivePerformance: false, // Disabled since we always use high-performance mode
+    highPerformanceThreshold: 0, // Always use high-performance mode regardless of dot count
 };
 
 // Global bounds for worldwide dot distribution
@@ -528,7 +528,7 @@ export const usePerformanceTestStore = create<PerformanceTestState>(
 
         // High-performance binary data
         dotBuffer: null,
-        useHighPerformanceMode: false,
+        useHighPerformanceMode: true, // Always use high performance mode
 
         isRunning: false,
         config: DEFAULT_CONFIG,
@@ -546,9 +546,8 @@ export const usePerformanceTestStore = create<PerformanceTestState>(
 
         startTest: () => {
             const { config } = get();
-            const useHighPerf =
-                config.enableAdaptivePerformance &&
-                config.dotCount >= config.highPerformanceThreshold;
+            // Always use high-performance mode
+            const useHighPerf = true;
 
             set({
                 isRunning: true,
@@ -561,25 +560,19 @@ export const usePerformanceTestStore = create<PerformanceTestState>(
                     : null,
             });
 
-            // Generate dots using appropriate method
-            if (useHighPerf) {
-                const { dotBuffer, bounds, config: currentConfig } = get();
-                if (dotBuffer) {
-                    generateDotsToBuffer(
-                        currentConfig.dotCount,
-                        bounds,
-                        currentConfig,
-                        dotBuffer,
-                    );
-                    set({
-                        totalDots: dotBuffer.count,
-                        visibleDotsCount: dotBuffer.count,
-                    });
-                }
-            } else {
-                // Use legacy method for smaller dot counts
-                const { generateDots } = get();
-                generateDots(config.dotCount);
+            // Generate dots using high-performance method
+            const { dotBuffer, bounds, config: currentConfig } = get();
+            if (dotBuffer) {
+                generateDotsToBuffer(
+                    currentConfig.dotCount,
+                    bounds,
+                    currentConfig,
+                    dotBuffer,
+                );
+                set({
+                    totalDots: dotBuffer.count,
+                    visibleDotsCount: dotBuffer.count,
+                });
             }
         },
 
@@ -589,7 +582,7 @@ export const usePerformanceTestStore = create<PerformanceTestState>(
                 dots: [],
                 visibleDots: [],
                 dotBuffer: null,
-                useHighPerformanceMode: false,
+                useHighPerformanceMode: true, // Keep high performance mode even when stopped
                 totalDots: 0,
                 visibleDotsCount: 0,
                 lastViewportBounds: null,
